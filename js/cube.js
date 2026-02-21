@@ -11,10 +11,22 @@ const vs = [
 ]
 
 const fs = [
-    [0, 1, 2, 3],      // Voorkant (z=0.25) - correct
-    [7, 6, 5, 4],      // Achterkant (z=-0.25) - winding order omgedraaid
-    [0, 4],
-    [1, 5],
-    [2, 6],
-    [3, 7],
+    // Front face (z=0.25)
+    [0, 1, 2],
+    [0, 2, 3],
+    // Back face (z=-0.25)
+    [7, 6, 5],
+    [7, 5, 4],
+    // Top face (y=0.25)
+    [0, 4, 5],
+    [0, 5, 1],
+    // Bottom face (y=-0.25)
+    [2, 6, 7],
+    [2, 7, 3],
+    // Left face (x=-0.25)
+    [1, 5, 6],
+    [1, 6, 2],
+    // Right face (x=0.25)
+    [3, 7, 4],
+    [3, 4, 0],
 ]

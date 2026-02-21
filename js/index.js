@@ -460,13 +460,12 @@ class Renderer {
         const brightness = Math.max(0, Vector3D.dot(normalizedNormal, this.lightDirection));
 
         // Zet brightness (0-1) om naar groentint (RGB)
-        const minBrightness = 0.3;
+        // Verhoog minimale helderheid voor beter zicht op alle vlakken
+        const minBrightness = 0.2;
         const finalBrightness = minBrightness + brightness * (1 - minBrightness);
         const colorValue = Math.floor(255 * finalBrightness);
 
         this.ctx.fillStyle = `rgb(0, ${colorValue}, 0)`;
-        this.ctx.strokeStyle = `rgb(0, ${colorValue * 0.7}, 0)`;
-        this.ctx.lineWidth = 1;
 
         this.ctx.beginPath();
         this.ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
@@ -475,7 +474,6 @@ class Renderer {
         }
         this.ctx.closePath();
         this.ctx.fill();
-        this.ctx.stroke();
     }
 
     /**
@@ -523,12 +521,15 @@ class Application {
         this.renderer = new Renderer(canvasId);
         this.fpsCounter = new FPSCounter();
         this.targetFPS = 60;
+        this._timer = null;
+        this._running = false;
         this.setupControls();
     }
 
     setupControls() {
         document.addEventListener('keydown', (e) => {
-            if (e.key.toLowerCase() === 'w') {
+            const key = e.key.toLowerCase();
+            if (key === 'w') {
                 this.renderer.wireframeMode = !this.renderer.wireframeMode;
                 console.log('Wireframe mode:', this.renderer.wireframeMode ? 'ON' : 'OFF');
             }
@@ -575,19 +576,117 @@ class Application {
      * Main loop
      */
     start() {
-        const frameTime = 1000 / this.targetFPS;
+        this._running = true;
+        const targetFrameTime = 1000 / this.targetFPS;
+        let lastTime = performance.now();
         const dt = 0.5 / this.targetFPS;
 
-        const loop = () => {
-            this.update(dt);
-            this.render();
-            setTimeout(loop, frameTime);
+        const loop = (currentTime) => {
+            if (!this._running) return;
+            
+            const elapsed = currentTime - lastTime;
+            if (elapsed >= targetFrameTime) {
+                this.update(dt);
+                this.render();
+                lastTime = currentTime;
+            }
+            
+            this._timer = requestAnimationFrame(loop);
         };
 
-        loop();
+        this._timer = requestAnimationFrame(loop);
+    }
+
+    stop() {
+        this._running = false;
+        if (this._timer) {
+            cancelAnimationFrame(this._timer);
+            this._timer = null;
+        }
     }
 }
 
-// Initialize met penger model - camera afstand aanpassen voor grotere weergave
-const app = new Application('game', new Model3D(vs, fs, 2.5));
-app.start();
+// Initialize model: try loading an external OBJ first, fall back to embedded model
+let currentApp = null;
+
+// Auto-center and auto-scale vertices to fit nicely in view
+function normalizeModel(vertices) {
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+
+    for (const v of vertices) {
+        if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+        if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+        if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z;
+    }
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const cz = (minZ + maxZ) / 2;
+
+    const sizeX = maxX - minX;
+    const sizeY = maxY - minY;
+    const sizeZ = maxZ - minZ;
+    const maxSize = Math.max(sizeX, sizeY, sizeZ);
+    const scale = maxSize > 0 ? 1.0 / maxSize : 1;
+
+    return vertices.map(v => ({
+        x: (v.x - cx) * scale,
+        y: (v.y - cy) * scale,
+        z: (v.z - cz) * scale,
+    }));
+}
+
+function startWithModel(model) {
+    if (currentApp && typeof currentApp.stop === 'function') currentApp.stop();
+
+    model.vertices = normalizeModel(model.vertices);
+
+    currentApp = new Application('game', new Model3D(model.vertices, model.faces, 1.8));
+    currentApp.start();
+
+    const status = document.getElementById('modelStatus');
+    if (status) {
+        status.textContent = `Vertices: ${model.vertices.length}  Faces: ${model.faces.length}`;
+    }
+    console.log(`Model started — vertices=${model.vertices.length} faces=${model.faces.length}`);
+    console.log('First 5 vertices:', model.vertices.slice(0, 5));
+}
+
+async function tryLoadDefault() {
+    try {
+        const result = await loadOBJ('../objects/penger.obj');
+        if (result && result.vertices && result.faces && result.vertices.length && result.faces.length) {
+            startWithModel(new Model3D(result.vertices, result.faces, 2.5));
+            console.log('Loaded model from objects/penger.obj');
+            return;
+        }
+        throw new Error('OBJ file parsed but contains no geometry');
+    } catch (e) {
+        console.warn('Could not load OBJ, falling back to embedded model:', e);
+        startWithModel(new Model3D(vs, fs, 2.5));
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    tryLoadDefault();
+
+    const fileInput = document.getElementById('objFile');
+    if (fileInput) {
+        fileInput.addEventListener('change', async (ev) => {
+            const f = ev.target.files[0];
+            if (!f) return;
+            try {
+                const text = await f.text();
+                const parsed = (typeof parseOBJ === 'function') ? parseOBJ(text) : (await loadOBJFromString(text));
+                if (!parsed || !parsed.vertices || !parsed.faces) throw new Error('Parsed OBJ invalid');
+                startWithModel(new Model3D(parsed.vertices, parsed.faces, 2.5));
+                console.log('Loaded model from local file:', f.name);
+            } catch (err) {
+                console.error('Failed to parse OBJ file:', err);
+                alert('Failed to load OBJ: ' + (err && err.message ? err.message : err));
+            }
+        });
+    }
+});
